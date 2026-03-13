@@ -10,7 +10,9 @@ fi
 
 # Define the image tag (use semantic versioning for production)
 IMAGE_REPOSITORY=appconfig-operator
-IMAGE_TAG=0.2.0
+IMAGE_TAG=${IMAGE_TAG:-0.2.0}
+
+echo "Image Tag: $IMAGE_TAG"
 
 # Build and push linux/amd64 (for cloud Kubernetes clusters)
 docker buildx create --use

@@ -75,7 +75,7 @@ func (r *AppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		cm := corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      appConfig.Name,
-				Namespace: appConfig.Namespace,
+				Namespace: appConfig.Spec.TargetNamespace,
 			},
 			Data: appConfig.Spec.Data,
 		}

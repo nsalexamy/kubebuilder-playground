@@ -48,9 +48,16 @@ kubectl get crd appconfigs.nsalexamy.com
 
 Deploy the controller and all RBAC resources:
 
+[WARNING]
+====
+Please make sure the Docker image is pushed before running the 'make deploy' command below.
+====
+
 [source,bash]
 ----
-make deploy IMG=credemol/appconfig-operator:0.2.0
+IMAGE_TAG=0.2.1
+
+make deploy IMG=credemol/appconfig-operator:$IMAGE_TAG
 ----
 
 This creates:
