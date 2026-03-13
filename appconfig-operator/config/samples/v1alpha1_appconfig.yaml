@@ -1,0 +1,13 @@
+apiVersion: nsalexamy.com/v1alpha1
+kind: AppConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: appconfig-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: appconfig-sample
+spec:
+  # TODO(user): Add fields here
+  targetNamespace: mlops
+  data:
+    APP_MODE: production
+    LOG_LEVEL: info  

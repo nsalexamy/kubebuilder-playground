@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - nsalexamy.com
+  resources:
+  - appconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - nsalexamy.com
+  resources:
+  - appconfigs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - nsalexamy.com
+  resources:
+  - appconfigs/status
+  verbs:
+  - get
+  - patch
+  - update

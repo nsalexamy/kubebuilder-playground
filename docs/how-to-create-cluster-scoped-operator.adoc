@@ -1,0 +1,124 @@
+= How to Create a Cluster-Scoped Operator
+
+This guide explains how to convert a namespaced Kubernetes operator (CRD) to cluster-scoped using the appconfig-operator as a reference.
+
+== Overview
+
+Cluster-scoped resources exist at the cluster level rather than within a namespace. They have no namespace field and are not tied to a specific project or tenant. Examples include `ClusterRole`, `Namespace`, and `PersistentVolume`.
+
+== Step 1: Add the resource scope marker
+
+In your API types file (e.g., `api/v1alpha1/appconfig_types.go`), add the `+kubebuilder:resource:scope=Cluster` marker above your main resource type:
+
+[source,go]
+----
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
+
+// AppConfig is the Schema for the appconfigs API
+type AppConfig struct {
+    metav1.TypeMeta   `json:",inline"`
+    metav1.ObjectMeta `json:"metadata,omitzero"`
+    Spec   AppConfigSpec   `json:"spec"`
+    Status AppConfigStatus `json:"status,omitzero"`
+}
+----
+
+== Step 2: Update the PROJECT file
+
+In `PROJECT`, change the resource from namespaced to cluster-scoped:
+
+[source,yaml]
+----
+resources:
+- api:
+    crdVersion: v1
+    namespaced: false   # was: true
+  controller: true
+  domain: nsalexamy.com
+  kind: AppConfig
+  ...
+----
+
+== Step 3: Regenerate manifests
+
+Run:
+
+[source,bash]
+----
+make manifests
+----
+
+This updates the CRD to use `scope: Cluster` instead of `scope: Namespaced`.
+
+== Step 4: Update controller logic
+
+Cluster-scoped resources have no namespace, so `appConfig.Namespace` will be empty. If your controller creates namespaced child resources (e.g., ConfigMaps), you must specify where they go.
+
+=== Option A: Add a target namespace to the spec
+
+Add a field to specify where child resources are created:
+
+[source,go]
+----
+type AppConfigSpec struct {
+    // TargetNamespace is where the ConfigMap will be created (required for cluster-scoped AppConfig)
+    // +optional
+    TargetNamespace string `json:"targetNamespace,omitempty"`
+
+    // Data contains key-value pairs to populate a ConfigMap
+    // +optional
+    Data map[string]string `json:"data,omitempty"`
+}
+----
+
+Use `appConfig.Spec.TargetNamespace` when creating/updating ConfigMaps and when building `NamespacedName` for `Get`/`Update` calls.
+
+=== Option B: Use a default namespace
+
+Create child resources in a fixed namespace (e.g., `default`) when no target is specified. Simpler but less flexible.
+
+== Step 5: Sample YAML
+
+Cluster-scoped resources are applied without a namespace:
+
+[source,yaml]
+----
+apiVersion: nsalexamy.com/v1alpha1
+kind: AppConfig
+metadata:
+  name: appconfig-sample   # no namespace
+spec:
+  targetNamespace: mlops   # where the ConfigMap goes
+  data:
+    APP_MODE: production
+    LOG_LEVEL: info
+----
+
+Apply with:
+
+[source,bash]
+----
+kubectl apply -f config/samples/v1alpha1_appconfig.yaml
+----
+
+Note: No `-n` flag—cluster-scoped resources don't belong to a namespace.
+
+== Step 6: Reinstall the CRD
+
+Because the scope is a breaking change, reinstall the CRD:
+
+[source,bash]
+----
+make uninstall
+make install
+----
+
+After changes to the CRD schema (e.g., adding new fields like `data` or `targetNamespace`), run `make install` to apply the updated CRD to your cluster.
+
+== Important notes
+
+* *Breaking change*: Converting from namespaced to cluster-scoped is a breaking change. Existing AppConfig instances and their child resources (e.g., ConfigMaps) will need to be migrated or recreated.
+* *CRD updates*: If you add new spec fields (e.g., `data`), ensure you run `make manifests` and `make install` so the cluster has the latest schema. Otherwise you may see errors like `unknown field "spec.data"`.
+* *Reconcile request*: For cluster-scoped resources, `req.NamespacedName` in the controller only has `Name` populated; `Namespace` is empty.

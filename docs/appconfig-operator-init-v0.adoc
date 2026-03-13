@@ -1,0 +1,240 @@
+
+= Init appconfig-operator project
+
+== Create project
+
+[source,bash]
+----
+mkdir appconfig-operator
+cd appconfig-operator
+
+go mod init github.com/nsalexamy/kubebuilder-playground/appconfig-operator
+
+kubebuilder init --domain nsalexamy.com
+----
+
+Example output:
+
+[source,bash]
+----
+INFO Writing kustomize manifests for you to edit... 
+INFO Writing scaffold for you to edit... 
+INFO Get controller runtime 
+INFO Update dependencies 
+Next: define a resource with:
+----
+
+The full name of the API is:
+<plural>.<group>.<domain>
+
+So, do not use nsalexamy as the group name.
+
+[source,bash]
+----
+# controller: default to true, resource: default to false
+#kubebuilder create api --group nsalexamy --version v1alpha1 --kind AppConfig --controller=true --resource=true
+#kubebuilder create api --group nsalexamy --version v1alpha1 --kind AppConfig 
+
+kubebuilder create api --group "" --version v1alpha1 --kind AppConfig
+
+----
+
+Example output:
+
+[source,bash]
+----
+INFO Create Resource [y/n] 
+y
+INFO Create Controller [y/n] 
+y
+INFO Writing kustomize manifests for you to edit... 
+INFO Writing scaffold for you to edit... 
+INFO api/v1alpha1/appconfig_types.go 
+INFO api/v1alpha1/groupversion_info.go 
+INFO internal/controller/suite_test.go 
+INFO internal/controller/appconfig_controller.go 
+INFO internal/controller/appconfig_controller_test.go 
+INFO Update dependencies 
+INFO Running make 
+mkdir -p "/Users/young/Dev/alexamy/kubernetes-controllers/kubebuilder-playground/appconfig-operator/bin"
+Downloading sigs.k8s.io/controller-tools/cmd/controller-gen@v0.20.0
+"/Users/young/Dev/alexamy/kubernetes-controllers/kubebuilder-playground/appconfig-operator/bin/controller-gen" object:headerFile="hack/boilerplate.go.txt" paths="./..."
+Next: implement your new API and generate the manifests (e.g. CRDs,CRs) with:
+$ make manifests
+----
+
+== Implement the API
+
+.internal/controller/appconfig_controller.go - Reconcile function
+[source,go]
+----
+
+func (r *AppConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	_ = logf.FromContext(ctx)
+
+    // Fetch the AppConfig resource
+    var appConfig examplev1.AppConfig
+    err := r.Get(ctx, req.NamespacedName, &appConfig)
+    if err != nil {
+        return ctrl.Result{}, client.IgnoreNotFound(err)
+    }
+
+    // Check if ConfigMap already exists
+    var configMap corev1.ConfigMap
+    err = r.Get(ctx, req.NamespacedName, &configMap)
+
+    if err != nil && errors.IsNotFound(err) {
+
+        // Create ConfigMap if it doesn't exist
+        cm := corev1.ConfigMap{
+            ObjectMeta: metav1.ObjectMeta{
+                Name:      appConfig.Name,
+                Namespace: appConfig.Namespace,
+            },
+            Data: appConfig.Spec.Data,
+        }
+
+        // Set owner reference
+        err = controllerutil.SetControllerReference(&appConfig, &cm, r.Scheme)
+        if err != nil {
+            return ctrl.Result{}, err
+        }
+
+        err = r.Create(ctx, &cm)
+        return ctrl.Result{}, err
+    }
+
+    // Update ConfigMap if spec changes
+    if !reflect.DeepEqual(configMap.Data, appConfig.Spec.Data) {
+        configMap.Data = appConfig.Spec.Data
+        err = r.Update(ctx, &configMap)
+        return ctrl.Result{}, err
+    }
+
+
+	return ctrl.Result{}, nil
+}
+----
+
+
+.config/samples/nsalexamy_v1alpha1_appconfig.yaml - AppConfig sample
+[source,yaml]
+----
+apiVersion: nsalexamy.nsalexamy.com/v1alpha1
+kind: AppConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: appconfig-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: appconfig-sample
+spec:
+  # TODO(user): Add fields here
+  data:
+    APP_MODE: production
+    LOG_LEVEL: info  
+----
+
+
+Before creating a CR instance, install the CRD into your cluster:
+
+[source,bash]
+----
+make install
+----
+
+This applies the CRD from:
+----
+config/crd/bases/
+----
+
+This will install the CRDs into the cluster.
+
+[source,bash]
+----
+kubectl get crd | grep nsalexamy
+----
+
+Example output:
+
+[source,bash]
+----
+NAME                              CREATED AT
+appconfigs.nsalexamy.nsalexamy.com   2026-03-12T10:00:00Z
+----
+
+=== Run the controller locally
+
+For development, run the controller directly:
+[source,bash]
+----
+make run
+----
+
+Example output:
+
+[source,bash]
+----
+"/Users/young/Dev/alexamy/kubernetes-controllers/kubebuilder-playground/appconfig-operator/bin/controller-gen" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+"/Users/young/Dev/alexamy/kubernetes-controllers/kubebuilder-playground/appconfig-operator/bin/controller-gen" object:headerFile="hack/boilerplate.go.txt" paths="./..."
+go fmt ./...
+go vet ./...
+go run ./cmd/main.go
+2026-03-12T14:33:50-07:00       INFO    setup   starting manager
+2026-03-12T14:33:50-07:00       INFO    starting server {"name": "health probe", "addr": "[::]:8081"}
+2026-03-12T14:33:50-07:00       INFO    Starting EventSource    {"controller": "appconfig", "controllerGroup": "nsalexamy.nsalexamy.com", "controllerKind": "AppConfig", "source": "kind source: *v1alpha1.AppConfig"}
+2026-03-12T14:33:50-07:00       INFO    Starting Controller     {"controller": "appconfig", "controllerGroup": "nsalexamy.nsalexamy.com", "controllerKind": "AppConfig"}
+2026-03-12T14:33:50-07:00       INFO    Starting workers        {"controller": "appconfig", "controllerGroup": "nsalexamy.nsalexamy.com", "controllerKind": "AppConfig", "worker count": 1}
+----
+
+Only when the controller is running, it will detect the CR instance and create the ConfigMap.
+
+
+=== Install the CRD into the cluster
+
+Install the CRD into the cluster:
+[source,bash]
+----
+make install
+----
+
+Now you can create a CR instance:
+
+[source,bash]
+----
+kubectl apply -f config/samples/nsalexamy_v1alpha1_appconfig.yaml -n mlops
+----
+
+Example output:
+
+[source,bash]
+----
+appconfig.nsalexamy.nsalexamy.com/appconfig-sample created
+----
+
+=== Verify the CR instance
+
+Verify the CR instance:
+[source,bash]
+----
+kubectl get appconfig -n mlops
+----
+
+Example output:
+
+[source,bash]
+----
+NAME               AGE
+appconfig-sample   5m
+----
+
+=== What we implemented
+
+At this stage:
+	•	If your Reconcile function is implemented correctly and your controller is running (make run), the controller should:
+	1.	Detect the AppConfig CR.
+	2.	Create a ConfigMap using the spec.Data field.
+	3.	Set the CR as the owner of the ConfigMap.
+	•	If you haven’t applied the CR, or if your Reconcile function still has compilation issues, the ConfigMap won’t be created yet.
+
+===     
+
