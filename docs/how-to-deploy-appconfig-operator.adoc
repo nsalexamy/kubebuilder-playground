@@ -1,3 +1,237 @@
 = How to Deploy appconfig-operator
 
+This guide describes how to deploy the appconfig-operator to a Kubernetes cluster. The operator is cluster-scoped and creates ConfigMaps in target namespaces based on AppConfig custom resources.
 
+== Prerequisites
+
+* Kubernetes cluster (v1.11.3+)
+* `kubectl` configured with cluster access
+* Docker image: `credemol/appconfig-operator:0.2.0`
+
+== Quick Deploy
+
+[source,bash]
+----
+cd appconfig-operator
+
+# 1. Install CRDs
+make install
+
+# 2. Deploy the operator with the public image
+make deploy IMG=credemol/appconfig-operator:0.2.0
+
+# 3. Verify
+kubectl get deployment -n appconfig-operator-system
+kubectl get appconfig  # cluster-scoped, no namespace
+----
+
+== Step-by-Step
+
+=== 1. Install Custom Resource Definitions
+
+Install the AppConfig CRD:
+
+[source,bash]
+----
+cd appconfig-operator
+make install
+----
+
+This applies the CRD to your cluster. Verify with:
+
+[source,bash]
+----
+kubectl get crd appconfigs.nsalexamy.com
+----
+
+=== 2. Deploy the Operator
+
+Deploy the controller and all RBAC resources:
+
+[source,bash]
+----
+make deploy IMG=credemol/appconfig-operator:0.2.0
+----
+
+This creates:
+
+* Namespace `appconfig-operator-system`
+* Deployment (controller manager)
+* ServiceAccount
+* ClusterRole and ClusterRoleBinding (RBAC)
+* Leader election Role/RoleBinding
+* Metrics Service
+
+Verify the deployment:
+
+[source,bash]
+----
+kubectl get pods -n appconfig-operator-system
+kubectl logs -n appconfig-operator-system deployment/appconfig-operator-controller-manager -c manager -f
+----
+
+=== 3. Create an AppConfig
+
+Since AppConfig is cluster-scoped, apply without a namespace:
+
+[source,bash]
+----
+kubectl apply -f config/samples/v1alpha1_appconfig.yaml
+----
+
+Example AppConfig:
+
+[source,yaml]
+----
+apiVersion: nsalexamy.com/v1alpha1
+kind: AppConfig
+metadata:
+  name: appconfig-sample
+spec:
+  targetNamespace: mlops    # where the ConfigMap will be created
+  data:
+    APP_MODE: production
+    LOG_LEVEL: info
+----
+
+The operator creates a ConfigMap with the same name in `spec.targetNamespace`. Verify:
+
+[source,bash]
+----
+kubectl get appconfig
+kubectl get configmap -n mlops
+----
+
+== RBAC Overview
+
+The operator uses a ClusterRole (`manager-role`) because AppConfig is cluster-scoped and the operator creates ConfigMaps in arbitrary target namespaces.
+
+=== ClusterRole Permissions
+
+| Resource | API Group | Verbs |
+|----------|-----------|-------|
+| appconfigs | nsalexamy.com | get, list, watch, create, update, patch, delete |
+| appconfigs/status | nsalexamy.com | get, update, patch |
+| appconfigs/finalizers | nsalexamy.com | update |
+| configmaps | "" (core) | get, list, watch, create, update, patch, delete |
+
+* *AppConfig*: Full access to watch and reconcile cluster-scoped AppConfig resources.
+* *ConfigMaps*: Required to create and update ConfigMaps in `spec.targetNamespace` for each AppConfig.
+
+=== Binding
+
+The ClusterRole is bound to the controller's ServiceAccount via a ClusterRoleBinding, so the operator has cluster-wide access to AppConfigs and ConfigMaps in all namespaces.
+
+=== Leader Election
+
+A namespaced Role (`leader-election-role`) grants permissions for ConfigMaps and Leases in the operator namespace only, used for leader election.
+
+== Building and Pushing Your Own Image
+
+To build and push a custom image:
+
+[source,bash]
+----
+cd appconfig-operator
+
+# Build
+make docker-build IMG=credemol/appconfig-operator:0.2.0
+
+# Push (requires docker login)
+make docker-push IMG=credemol/appconfig-operator:0.2.0
+----
+
+For multi-arch (linux/amd64, linux/arm64):
+
+[source,bash]
+----
+docker buildx build --push --platform linux/amd64,linux/arm64 \
+  -t credemol/appconfig-operator:0.2.0 \
+  -f Dockerfile .
+----
+
+== Uninstall
+
+Remove AppConfig instances, then undeploy:
+
+[source,bash]
+----
+# Delete AppConfig CRs (and any ConfigMaps they own)
+kubectl delete appconfig --all
+
+# Undeploy the operator
+make undeploy
+
+# Remove CRDs
+make uninstall
+----
+
+== Troubleshooting
+
+* *RBAC errors*: Ensure the operator's ServiceAccount has the ClusterRoleBinding. Check with `kubectl get clusterrolebinding manager-rolebinding -o yaml`.
+* *ConfigMap not created*: Verify `spec.targetNamespace` is set and the namespace exists. Check operator logs: `kubectl logs -n appconfig-operator-system deployment/appconfig-operator-controller-manager -c manager`.
+* *Image pull errors*: Ensure the image `credemol/appconfig-operator:0.2.0` is public or that the cluster has credentials to pull from the registry.
+
+== Deploying from the Public Repository
+
+The appconfig-operator source and manifests are available in the public Git repository:
+
+https://github.com/nsalexamy/kubebuilder-playground[nsalexamy/kubebuilder-playground]
+
+You can deploy using these public resources in several ways:
+
+=== Option 1: Clone and Deploy (Recommended)
+
+Clone the repository and use the Makefile:
+
+[source,bash]
+----
+git clone https://github.com/nsalexamy/kubebuilder-playground.git
+cd kubebuilder-playground/appconfig-operator
+
+make install
+make deploy IMG=credemol/appconfig-operator:0.2.0
+----
+
+*Requires*: `make`, `kubectl`, `kustomize` (downloaded automatically by the Makefile if missing).
+
+=== Option 2: kubectl apply -k (Direct from GitHub)
+
+Apply the Kustomize manifests directly from the repository without cloning:
+
+[source,bash]
+----
+# Install CRDs first
+kubectl apply -k "https://github.com/nsalexamy/kubebuilder-playground.git/appconfig-operator/config/crd?ref=main"
+
+# Deploy the operator (CRD + RBAC + Deployment)
+kubectl apply -k "https://github.com/nsalexamy/kubebuilder-playground.git/appconfig-operator/config/default?ref=main"
+----
+
+*Requires*: `kubectl` 1.14+ with Kustomize support. The manifests use the pre-configured image `credemol/appconfig-operator:0.2.0` from the repository.
+
+=== Option 3: Pre-built install.yaml (If Available)
+
+If a `dist/install.yaml` bundle is published in the repo, you can install with a single command:
+
+[source,bash]
+----
+kubectl apply -f https://raw.githubusercontent.com/nsalexamy/kubebuilder-playground/main/appconfig-operator/dist/install.yaml
+----
+
+To generate and commit this file as a maintainer:
+
+[source,bash]
+----
+cd appconfig-operator
+make build-installer IMG=credemol/appconfig-operator:0.2.0
+# Commit and push dist/install.yaml
+----
+
+=== Sharing with Others
+
+To share the appconfig-operator with others:
+
+. *Point users to the repo*: Share the repository URL and this deployment guide.
+. *Publish a release*: Create a GitHub Release (e.g., `v0.2.0`) and attach `dist/install.yaml` for one-command install.
+. *Document the image*: The public image `credemol/appconfig-operator:0.2.0` is usable by anyone with cluster access; no private registry required.
